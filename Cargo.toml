@@ -48,3 +48,8 @@ inherits = "dev"
 
 [profile.bundle-release]
 inherits = "release"
+
+
+[patch.crates-io.tauri]
+git = "https://github.com/tauri-apps/tauri"
+branch = "dev"
