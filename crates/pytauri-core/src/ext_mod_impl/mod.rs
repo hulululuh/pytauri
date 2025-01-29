@@ -277,6 +277,8 @@ macro_rules! manager_method_impl {
     };
 }
 
+// TODO, PERF: maybe we should release GIL?
+// The methods of [Manager] seem require other locks internally.
 #[pymethods]
 impl Manager {
     #[staticmethod]
@@ -370,6 +372,8 @@ impl Listener {
     }
 }
 
+// TODO, PERF: maybe we should release GIL?
+// The methods of [Listener] seem require other locks internally.
 #[pymethods]
 impl Listener {
     #[staticmethod]
@@ -523,6 +527,12 @@ pub type ImplEmitter = ImplManager;
 #[non_exhaustive]
 pub struct Emitter;
 
+impl Emitter {
+    fn assert_is_emitter<T: tauri::Emitter<Runtime>>(v: &T) -> &T {
+        v
+    }
+}
+
 #[pymethods]
 impl Emitter {
     #[staticmethod]
@@ -531,7 +541,16 @@ impl Emitter {
             ($wrapper:expr) => {{
                 let py_ref = $wrapper.borrow(py);
                 let guard = py_ref.0.inner_ref_semver()??;
-                guard.emit_str(event, payload).map_err(TauriError::from)?;
+                let guard = Self::assert_is_emitter(guard.deref());
+                // NOTE: we had better release the GIL, because `emit` is not a very fast operation,
+                // it even acquires other locks internally.
+                //
+                // Safe: `guard: &impl tauri::Emitter` does not hold the GIL, so this is safe.
+                unsafe {
+                    py.allow_threads_unsend(guard, |guard| {
+                        guard.emit_str(event, payload).map_err(TauriError::from)
+                    })?;
+                }
                 Ok(())
             }};
         }
@@ -546,14 +565,24 @@ impl Emitter {
         event: &str,
         payload: String,
     ) -> PyResult<()> {
+        let target = target.get().to_tauri(py)?;
+
         macro_rules! emit_str_to_impl {
             ($wrapper:expr) => {{
                 let py_ref = $wrapper.borrow(py);
                 let guard = py_ref.0.inner_ref_semver()??;
-                let target = target.get().to_tauri(py)?;
-                guard
-                    .emit_str_to(target, event, payload)
-                    .map_err(TauriError::from)?;
+                let guard = Self::assert_is_emitter(guard.deref());
+                // NOTE: we had better release the GIL, because `emit` is not a very fast operation,
+                // it even acquires other locks internally.
+                //
+                // Safe: `guard: &impl tauri::Emitter` does not hold the GIL, so this is safe.
+                unsafe {
+                    py.allow_threads_unsend(guard, |guard| {
+                        guard
+                            .emit_str_to(target, event, payload)
+                            .map_err(TauriError::from)
+                    })?;
+                }
                 Ok(())
             }};
         }
@@ -583,6 +612,9 @@ impl Emitter {
             }
         }
 
+        // We can't release the GIL here, because `rs_filter` will be used as `iter.filter(|..| rs_filter(..))`;
+        // if we frequently release and acquire the GIL, maybe it will cause performance problems.
+        // TODO: only tauri itself can release GIL in `emit_str_filter`.
         let rs_filter = |target: &tauri::EventTarget| -> bool {
             let target = EventTarget::from_tauri(target, py);
             let filter_result = filter.call1((target,));
