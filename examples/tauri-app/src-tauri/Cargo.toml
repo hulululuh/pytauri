@@ -36,3 +36,9 @@ pytauri = { workspace = true }
 tauri-plugin-pytauri = { workspace = true }
 tauri-plugin-notification = { workspace = true }
 pytauri-plugin-notification = { workspace = true }
+
+[profile.bundle-dev]
+inherits = "dev"
+
+[profile.bundle-release]
+inherits = "release"
