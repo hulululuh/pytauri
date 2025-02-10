@@ -10,3 +10,6 @@ coverage.xml
 # mkdocs build
 /site/
 .cache/
+
+# other projects
+examples/__tauri-app
